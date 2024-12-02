@@ -510,7 +510,7 @@ function webp_uploads_remove_sources_files( int $attachment_id ): void {
 add_action( 'delete_attachment', 'webp_uploads_remove_sources_files', 10, 1 );
 
 /**
- * Filters `the_content` to update images so that they use the preferred MIME type where possible.
+ * Filters `wp_content_img_tag` to update images so that they use the preferred MIME type where possible.
  *
  * By default, this is `image/webp`, if the current attachment contains the targeted MIME
  * type. In the near future this will be filterable.
@@ -522,63 +522,20 @@ add_action( 'delete_attachment', 'webp_uploads_remove_sources_files', 10, 1 );
  *
  * @see wp_filter_content_tags()
  *
- * @param string|mixed $content The content of the current post.
- * @return string The content with the updated references to the images.
+ * @param string $image    An <img> tag where the urls would be updated.
+ * @param string $context  The context where this is function is being used.
+ * @param int    $attachment_id The ID of the attachment being modified.
+ * @return string The updated img tag.
  */
-function webp_uploads_update_image_references( $content ): string {
-	if ( ! is_string( $content ) ) {
-		$content = '';
-	}
-
+function webp_uploads_update_image_references( string $image, string $context, int $attachment_id ): string {
 	// Bail early if request is not for the frontend.
 	if ( ! webp_uploads_in_frontend_body() ) {
-		return $content;
+		return $image;
 	}
 
-	// This content does not have any tag on it, move forward.
-	// TODO: Eventually this should use the HTML API to parse out the image tags and then update them.
-	if ( 0 === (int) preg_match_all( '/<(img)\s[^>]+>/', $content, $img_tags, PREG_SET_ORDER ) ) {
-		return $content;
-	}
-
-	$images = array();
-	foreach ( $img_tags as list( $img ) ) {
-		$processor = new WP_HTML_Tag_Processor( $img );
-		if ( ! $processor->next_tag( array( 'tag_name' => 'IMG' ) ) ) {
-			// This condition won't ever be met since we're iterating over the IMG tags extracted with preg_match_all() above.
-			continue;
-		}
-
-		// Find the ID of each image by the class.
-		// TODO: It would be preferable to use the $processor->class_list() method but there seems to be some typing issues with PHPStan.
-		$class_name = $processor->get_attribute( 'class' );
-		if (
-			! is_string( $class_name )
-			||
-			1 !== preg_match( '/(?:^|\s)wp-image-([1-9]\d*)(?:\s|$)/i', $class_name, $matches )
-		) {
-			continue;
-		}
-
-		// Make sure we use the last item on the list of matches.
-		$images[ $img ] = (int) $matches[1];
-	}
-
-	$attachment_ids = array_unique( array_filter( array_values( $images ) ) );
-	if ( count( $attachment_ids ) > 1 ) {
-		/**
-		 * Warm the object cache with post and meta information for all found
-		 * images to avoid making individual database calls.
-		 */
-		_prime_post_caches( $attachment_ids, false, true );
-	}
-
-	foreach ( $images as $img => $attachment_id ) {
-		$content = str_replace( $img, webp_uploads_img_tag_update_mime_type( $img, 'the_content', $attachment_id ), $content );
-	}
-
-	return $content;
+	return webp_uploads_img_tag_update_mime_type( $image, $context, $attachment_id );
 }
+add_filter( 'wp_content_img_tag', 'webp_uploads_update_image_references', 13, 3 );
 
 /**
  * Finds all the urls with *.jpg and *.jpeg extension and updates with *.webp version for the provided image
@@ -776,7 +733,7 @@ function webp_uploads_init(): void {
 	if ( webp_uploads_is_picture_element_enabled() ) {
 		add_filter( 'wp_content_img_tag', 'webp_uploads_wrap_image_in_picture', 10, 3 );
 	} else {
-		add_filter( 'the_content', 'webp_uploads_update_image_references', 13 ); // Run after wp_filter_content_tags.
+		add_filter( 'wp_content_img_tag', 'webp_uploads_update_image_references', 13, 3 );
 	}
 }
 add_action( 'init', 'webp_uploads_init' );

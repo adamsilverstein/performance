@@ -460,3 +460,84 @@ function embed_optimizer_get_asset_path( string $src_path, ?string $min_path = n
 
 	return $min_path;
 }
+
+/**
+ * Filter the embed HTML. If it isn't an iframe, return an iframe that points to the embed source instead.
+ *
+ * @since n.e.x.t
+ *
+ * @param string|mixed        $html The embed HTML.
+ * @param string              $url  The embed URL.
+ * @param array<string,mixed> $attr The embed attributes.
+ * @return string The filtered embed HTML.
+ */
+function embed_optimizer_filter_embed_html_to_iframe( $html, string $url, array $attr ): string {
+	if ( ! is_string( $html ) ) {
+		return '';
+	}
+
+	if ( ! str_starts_with( $html, '<iframe' ) ) {
+		// Endpoint URL for iframe embed is a custom REST endpoint.
+		$rest_url = rest_url( 'embed-optimizer/v1/embed' );
+
+		// Add the url and attribute data to the rest_url as query parameters.
+		$rest_url = add_query_arg(
+			array(
+				'url'  => $url,
+				'attr' => $attr,
+			),
+			$rest_url
+		);
+
+		$html = sprintf( '<iframe src="%s"></iframe>', esc_url( $rest_url ) );
+	}
+
+	return $html;
+}
+add_filter( 'embed_oembed_html', 'embed_optimizer_filter_embed_html_to_iframe', 10, 3 );
+
+/**
+ * Add a REST api endpoint at 'embed-optimizer/v1/embed' that returns the embed HTML.
+ *
+ * @since n.e.x.t
+ */
+function embed_optimizer_add_rest_api_endpoint(): void {
+	register_rest_route(
+		'embed-optimizer/v1',
+		'/embed',
+		array(
+			'methods'           => 'GET',
+			'callback'          => 'embed_optimizer_rest_api_endpoint_callback',
+
+			// Don't escape the response.
+			'sanitize_callback' => null,
+		)
+	);
+}
+add_action( 'rest_api_init', 'embed_optimizer_add_rest_api_endpoint' );
+
+/**
+ * Callback for the REST api endpoint at 'embed-optimizer/v1/embed'.
+ *
+ * @since n.e.x.t
+ *
+ * phpcs:ignore Squiz.Commenting.FunctionComment.IncorrectTypeHint -- Using generic WP_REST_Request type for better type safety
+ * @param WP_REST_Request<array<string,mixed>> $request The REST request.
+ * @return void
+ */
+function embed_optimizer_rest_api_endpoint_callback( WP_REST_Request $request ): void {
+	$url  = $request->get_param( 'url' );
+	$attr = $request->get_param( 'attr' );
+
+	// Remove own filter.
+	remove_filter( 'embed_oembed_html', 'embed_optimizer_filter_embed_html_to_iframe', 10 );
+
+	// Use the WP_Embed shortcode method to get the embed HTML.
+	$embed = new WP_Embed();
+	$html  = $embed->shortcode( $attr, $url );
+
+	header( 'Content-Type: text/html' );
+	// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Embed HTML should not be escaped
+	echo $html;
+	exit();
+}
